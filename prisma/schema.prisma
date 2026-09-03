@@ -1,0 +1,561 @@
+// ============================================================================
+// Restposten Platform — Core Data Model
+// Phase 1: Architecture & Data Foundations
+//
+// Notes on conventions:
+// - All monetary values are stored as integer cents (no floats) to avoid
+//   rounding drift. Convert to display currency only in the presentation layer.
+// - Percentages that require sub-integer precision (dispute margin, Dutch
+//   auction decay rate) use Prisma `Decimal` to avoid binary floating-point
+//   error in fintech-adjacent calculations.
+// - `@@index` is added on every foreign key that will be queried outside of
+//   its parent relation (dashboards, admin filters, webhooks resolving by
+//   external id), in addition to the implicit FK index Prisma/Postgres adds.
+// - If deploying on Supabase, pair this schema with RLS policies added via a
+//   raw SQL migration (`supabase/migrations/*.sql`) — Prisma Migrate does not
+//   manage RLS policies natively. Recommended policy shape is noted inline
+//   next to the models that hold tenant-sensitive data.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// Enums
+// ----------------------------------------------------------------------------
+
+enum Role {
+  BUYER
+  SELLER
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+/// Channels a buyer may declare/be restricted to for resale, and channels a
+/// seller may restrict a listing against (channel/geo-fencing).
+enum ResaleChannel {
+  AMAZON
+  EBAY
+  KAUFLAND_DE
+  OTTO_MARKET
+  BRICK_AND_MORTAR
+  OWN_WEBSITE
+  WHOLESALE_B2B
+  EXPORT_EU
+  EXPORT_NON_EU
+  OTHER
+}
+
+enum PricingMode {
+  FIXED_PRICE
+  DUTCH_AUCTION
+  SEALED_BID
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  SOLD
+  CANCELLED
+  EXPIRED
+}
+
+enum ItemCondition {
+  A_GRADE
+  B_GRADE_RETURN
+  C_GRADE_DEFECT
+  D_GRADE_SALVAGE
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAYMENT_AUTHORIZED
+  CONFIRMED
+  IN_TRANSIT
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+/// Escrow-specific state machine, decoupled from the broader OrderStatus so
+/// that payment-capture state can be reasoned about independently of
+/// fulfillment state in the Stripe Connect manual-capture webhook handlers.
+enum EscrowStatus {
+  PAYMENT_AUTHORIZED
+  IN_TRANSIT
+  DELIVERED_INSPECTION_PERIOD
+  RELEASED
+  DISPUTED
+  REFUNDED
+  CANCELLED
+}
+
+enum DisputeType {
+  QUANTITY_MISMATCH
+  CONDITION_MISMATCH
+  DAMAGED_IN_TRANSIT
+  COUNTERFEIT_SUSPECTED
+  MISSING_ITEMS
+  WRONG_ITEMS
+  OTHER
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  AUTO_RESOLVED
+  SELLER_ACCEPTED
+  ADMIN_RESOLVED
+  REJECTED
+  ESCALATED
+}
+
+enum KycDocumentType {
+  TRADE_REGISTER_EXTRACT
+  VAT_CERTIFICATE
+  ID_DOCUMENT
+  BANK_CONFIRMATION
+  OTHER
+}
+
+// ----------------------------------------------------------------------------
+// Identity & B2B Verification
+// ----------------------------------------------------------------------------
+
+/// NextAuth-compatible User model (see @auth/prisma-adapter field
+/// requirements: id / email / emailVerified / image / accounts / sessions).
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String? // null when the user only ever signs in via OAuth
+  name          String
+  role          Role      @default(BUYER)
+  isActive      Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyProfile CompanyProfile?
+
+  accounts Account[]
+  sessions Session[]
+
+  listingsAsSeller     Listing[]        @relation("SellerListings")
+  ordersAsBuyer        Order[]          @relation("BuyerOrders")
+  ordersAsSeller       Order[]          @relation("SellerOrders")
+  disputesRaised       Dispute[]        @relation("DisputeRaisedBy")
+  disputesResolved     Dispute[]        @relation("DisputeResolvedBy")
+  kycDocumentsReviewed KycDocument[]    @relation("KycReviewedBy")
+  auditLogEntries      AuditLog[]
+
+  @@index([role])
+  @@map("users")
+}
+
+// --- NextAuth adapter models (Account / Session / VerificationToken) -------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+/// One CompanyProfile per User. Holds the legal/tax identity used for VIES
+/// verification, KYC review, and — for sellers — the Stripe Connect account
+/// used for escrow payouts.
+///
+/// Suggested Supabase RLS: `user_id = auth.uid()` for SELECT/UPDATE by the
+/// owning user; ADMIN role bypasses via a separate policy keyed off a JWT
+/// claim, never off a client-supplied header.
+model CompanyProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  legalName    String
+  tradingName  String?
+  vatCountryCode String // ISO 3166-1 alpha-2, e.g. "AT", "DE"
+  vatId          String  @unique // full UID incl. country prefix, e.g. "ATU12345678"
+  registrationNumber String? // Firmenbuchnummer (AT) / Handelsregisternummer (DE)
+
+  verificationStatus VerificationStatus @default(PENDING)
+  verificationNotes  String?            @db.Text
+  viesVerifiedAt     DateTime?
+  viesLastCheckedAt  DateTime?
+  viesRawResponse    Json? // raw VIES payload snapshot for audit/dispute purposes
+
+  // Address
+  addressStreet      String
+  addressHouseNumber String?
+  addressPostalCode  String
+  addressCity        String
+  addressCountryCode String // ISO 3166-1 alpha-2
+
+  phone   String?
+  website String?
+
+  // Buyer-side declared resale channels (drives channel/geo-fencing checks
+  // against Listing.restrictedChannels at checkout time).
+  resaleChannels ResaleChannel[]
+
+  // Stripe Connect — populated once onboarding completes for sellers, and
+  // (optionally) a Customer id for buyers to store payment methods.
+  stripeConnectedAccountId String? @unique
+  stripeCustomerId         String? @unique
+  stripeOnboardingComplete Boolean @default(false)
+  stripePayoutsEnabled     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  kycDocuments KycDocument[]
+
+  @@index([vatCountryCode])
+  @@index([verificationStatus])
+  @@map("company_profiles")
+}
+
+model KycDocument {
+  id               String             @id @default(cuid())
+  companyProfileId String
+  companyProfile   CompanyProfile     @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  type   KycDocumentType
+  fileUrl String
+  status VerificationStatus @default(PENDING)
+
+  reviewedByUserId String?
+  reviewedByUser   User?     @relation("KycReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewNotes      String?   @db.Text
+  reviewedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyProfileId])
+  @@index([status])
+  @@map("kyc_documents")
+}
+
+// ----------------------------------------------------------------------------
+// Catalog
+// ----------------------------------------------------------------------------
+
+model Category {
+  id       String     @id @default(cuid())
+  name     String
+  slug     String     @unique
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+
+  listings Listing[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+/// A Listing represents one sellable pallet/lot/truckload. Pricing mode
+/// determines which of the pricing fields below are authoritative; see the
+/// Zod refinement in listing.schema.ts (Phase 3) for cross-field validation
+/// (e.g. DUTCH_AUCTION requires startPriceCents + floorPriceCents + decay
+/// config; SEALED_BID requires biddingEndsAt; FIXED_PRICE requires only
+/// listPriceCents).
+model Listing {
+  id       String @id @default(cuid())
+  sellerId String
+  seller   User   @relation("SellerListings", fields: [sellerId], references: [id])
+
+  title       String
+  slug        String  @unique
+  description String  @db.Text
+
+  // Blind/NDA-gated listings hide brand identity until an NDA is accepted.
+  isBlindListing  Boolean @default(false)
+  blindTitle      String? // shown publicly in place of `title` while blind
+  requiresNda     Boolean @default(false)
+  ndaDocumentUrl  String?
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  pricingMode PricingMode
+
+  currency String @default("EUR")
+
+  // FIXED_PRICE
+  listPriceCents Int?
+
+  // DUTCH_AUCTION
+  startPriceCents        Int?
+  floorPriceCents        Int?
+  currentPriceCents      Int?
+  priceDecayCentsPerStep Int?
+  decayIntervalMinutes   Int?
+  decayStartAt           DateTime?
+  decayEndAt             DateTime?
+
+  // SEALED_BID
+  reservePriceCents Int?
+  biddingEndsAt     DateTime?
+
+  status ListingStatus @default(DRAFT)
+
+  // Channel / geo-fencing restrictions. Kept as a typed scalar array for fast
+  // filtering (`hasSome` queries) plus a structured JSON blob for richer,
+  // free-form rules that don't map cleanly onto a fixed enum (per-country
+  // export bans, marketplace-specific carve-outs, etc).
+  restrictedChannels ResaleChannel[]
+  geoFencingRules    Json? // e.g. { "exportOnly": true, "excludedCountries": ["AT","DE"], "notes": "..." }
+
+  escrowRequired Boolean @default(true)
+
+  // Logistics snapshot for freight calculation (Phase 2).
+  originZip         String
+  originCountryCode String
+  palletCount       Int
+  totalWeightKg      Decimal @db.Decimal(10, 2)
+  loadingMeters      Decimal? @db.Decimal(5, 2)
+  lengthCm           Int?
+  widthCm            Int?
+  heightCm           Int?
+
+  // Denormalized aggregates, recomputed whenever ManifestItem rows change.
+  totalManifestItems  Int @default(0)
+  totalMsrpCents      Int @default(0)
+  totalCostBasisCents Int @default(0)
+
+  publishedAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  manifestItems ManifestItem[]
+  orders        Order[]
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([categoryId])
+  @@index([pricingMode])
+  @@map("listings")
+}
+
+model ManifestItem {
+  id        String  @id @default(cuid())
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  ean   String // validated as EAN-13 at the application layer (see manifest.schema.ts)
+  sku   String?
+  title String
+  brand String?
+
+  condition ItemCondition
+  quantity  Int
+
+  msrpCents      Int // UVP
+  costBasisCents Int
+
+  imageUrls String[]
+  notes     String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([listingId])
+  @@index([ean])
+  @@map("manifest_items")
+}
+
+// ----------------------------------------------------------------------------
+// Transactions & Escrow
+// ----------------------------------------------------------------------------
+
+model Order {
+  id        String  @id @default(cuid())
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id])
+  buyerId   String
+  buyer     User    @relation("BuyerOrders", fields: [buyerId], references: [id])
+
+  // Denormalized onto Order (rather than requiring a join through Listing)
+  // for admin queries and Stripe webhook handlers that only carry an orderId.
+  sellerId String
+  seller   User   @relation("SellerOrders", fields: [sellerId], references: [id])
+
+  status        OrderStatus @default(PENDING_PAYMENT)
+  totalAmountCents Int
+  currency      String      @default("EUR")
+
+  // Immutable snapshot of logistics data at time of purchase (the Listing
+  // may change after other, unrelated orders — snapshotting protects the
+  // buyer/seller agreement).
+  logisticsSnapshot Json
+
+  carrier          String?
+  trackingNumber   String?
+  trackingUrl      String?
+  shippingLabelUrl String?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  escrowTransaction EscrowTransaction?
+  disputes          Dispute[]
+
+  @@index([listingId])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+  @@map("orders")
+}
+
+/// Escrow state machine backing the Stripe Connect manual-capture flow:
+/// PAYMENT_AUTHORIZED (PaymentIntent authorized, capture_method: manual) ->
+/// IN_TRANSIT -> DELIVERED_INSPECTION_PERIOD (48h clock starts on delivery
+/// scan) -> RELEASED (capture + transfer to connected account) | DISPUTED.
+model EscrowTransaction {
+  id      String @id @default(cuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  status EscrowStatus @default(PAYMENT_AUTHORIZED)
+
+  stripePaymentIntentId String  @unique
+  stripeChargeId        String?
+  stripeTransferId      String?
+
+  amountCents        Int
+  platformFeeCents   Int
+  sellerPayoutCents  Int
+  currency           String @default("EUR")
+
+  authorizedAt             DateTime?
+  capturedAt               DateTime?
+  deliveredAt              DateTime?
+  inspectionPeriodEndsAt   DateTime? // deliveredAt + 48h, set by delivery webhook
+  releasedAt               DateTime?
+  refundedAt               DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([inspectionPeriodEndsAt])
+  @@map("escrow_transactions")
+}
+
+model Dispute {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  raisedByUserId String
+  raisedByUser   User   @relation("DisputeRaisedBy", fields: [raisedByUserId], references: [id])
+
+  type        DisputeType
+  description String      @db.Text
+  proofUrls   String[]
+
+  // The buyer's claimed discrepancy, e.g. 4.5 means "4.5% of lot value
+  // affected". Compared against the platform's auto-resolution threshold
+  // (see AUTO_RESOLUTION_THRESHOLD_PERCENT in dispute-engine, Phase 4).
+  disputedPercentage Decimal @db.Decimal(5, 2)
+  disputedAmountCents Int
+
+  status DisputeStatus @default(OPEN)
+
+  autoResolutionThresholdPercent Decimal @default(3.00) @db.Decimal(5, 2)
+  autoResolvedAt                 DateTime?
+
+  resolvedByUserId String?
+  resolvedByUser   User?     @relation("DisputeResolvedBy", fields: [resolvedByUserId], references: [id])
+  resolutionNotes  String?   @db.Text
+  refundAmountCents Int?
+  resolvedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@map("disputes")
+}
+
+// ----------------------------------------------------------------------------
+// Compliance / Observability
+// ----------------------------------------------------------------------------
+
+/// Append-only audit trail for compliance-sensitive state transitions (KYC
+/// approval/rejection, escrow release, dispute resolution). Never updated,
+/// only inserted.
+model AuditLog {
+  id       String  @id @default(cuid())
+  actorId  String?
+  actor    User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  action     String // e.g. "KYC_APPROVED", "ESCROW_RELEASED", "DISPUTE_RESOLVED"
+  entityType String // e.g. "CompanyProfile", "EscrowTransaction", "Dispute"
+  entityId   String
+  metadata   Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@map("audit_logs")
+}
