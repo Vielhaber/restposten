@@ -1,3 +1,6 @@
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
+
 const PHASES = [
   {
     title: "Phase 1 — Architecture & Data Foundations",
@@ -50,6 +53,14 @@ export default function Home() {
           A gated B2B pallet/lot marketplace built on escrow-by-default payments, brand-safe blind listings, and
           structured manifest ingestion. This repository is being built out phase by phase.
         </p>
+        <div className="mt-2 flex flex-wrap gap-3">
+          <Link href="/listings" className={buttonVariants({ variant: "default" })}>
+            Marktplatz ansehen
+          </Link>
+          <Link href="/sell/new" className={buttonVariants({ variant: "outline" })}>
+            Restposten hochladen
+          </Link>
+        </div>
       </header>
 
       <ol className="flex flex-col gap-6">
