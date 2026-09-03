@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { SampleListing } from "@/lib/types/marketplace";
 import { CONDITION_LABELS, RESALE_CHANNEL_LABELS } from "@/lib/types/marketplace";
 import { summarizeManifest } from "@/lib/validation/manifest.schema";
+import { getCategoryVisual } from "@/lib/category-visuals";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PricingBox } from "./pricing-box";
@@ -19,17 +20,23 @@ function conditionMix(listing: SampleListing): string {
 
 export function ListingCard({ listing }: { listing: SampleListing }) {
   const summary = summarizeManifest(listing.manifestItems);
+  const visual = getCategoryVisual(listing.category);
+  const Icon = visual.icon;
 
   return (
-    <Card className="overflow-hidden">
-      <Link href={`/listings/${listing.slug}`} className="block hover:bg-accent/40">
-        <CardHeader>
+    <Card className="group overflow-hidden transition-shadow hover:shadow-lg hover:shadow-primary/5">
+      <Link href={`/listings/${listing.slug}`} className="block">
+        <div className={`flex h-28 items-center justify-center bg-gradient-to-br ${visual.gradient}`}>
+          <Icon className="h-10 w-10 text-foreground/50 transition-transform group-hover:scale-110" aria-hidden="true" />
+        </div>
+
+        <CardHeader className="pb-0">
           <div className="flex flex-wrap items-center gap-2">
             {listing.isBlindListing && <Badge variant="warning">Blind-Listing · NDA</Badge>}
             {listing.escrowRequired && <Badge variant="success">Treuhand-Zahlung</Badge>}
             <Badge variant="outline">{listing.category}</Badge>
           </div>
-          <h3 className="text-lg font-semibold leading-snug text-balance">
+          <h3 className="font-display text-lg font-semibold leading-snug text-balance">
             {listing.isBlindListing ? listing.blindTitle : listing.title}
           </h3>
           <p className="text-sm text-muted-foreground">
@@ -37,33 +44,38 @@ export function ListingCard({ listing }: { listing: SampleListing }) {
             {listing.seller.location}
           </p>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <dl className="grid grid-cols-3 gap-3 text-sm">
-            <div>
-              <dt className="text-xs text-muted-foreground">Artikel gesamt</dt>
-              <dd className="font-medium tabular-nums">{summary.totalManifestItems.toLocaleString("de-DE")}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Paletten</dt>
-              <dd className="font-medium tabular-nums">{listing.palletCount}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Zustand</dt>
-              <dd className="font-medium">{conditionMix(listing)}</dd>
-            </div>
-          </dl>
-
-          <div className="flex flex-wrap gap-1.5">
-            {listing.restrictedChannels.map((channel) => (
-              <Badge key={channel} variant="outline" className="text-[11px]">
-                {RESALE_CHANNEL_LABELS[channel]} gesperrt
-              </Badge>
-            ))}
-          </div>
-
-          <PricingBox listing={listing} compact />
-        </CardContent>
       </Link>
+      <CardContent className="flex flex-col gap-4 pt-4">
+        <dl className="grid grid-cols-3 gap-3 text-sm">
+          <div>
+            <dt className="text-xs text-muted-foreground">Artikel gesamt</dt>
+            <dd className="font-medium tabular-nums">{summary.totalManifestItems.toLocaleString("de-DE")}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Paletten</dt>
+            <dd className="font-medium tabular-nums">{listing.palletCount}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Zustand</dt>
+            <dd className="font-medium">{conditionMix(listing)}</dd>
+          </div>
+        </dl>
+
+        <div className="flex flex-wrap gap-1.5">
+          {listing.restrictedChannels.slice(0, 3).map((channel) => (
+            <Badge key={channel} variant="outline" className="text-[11px]">
+              {RESALE_CHANNEL_LABELS[channel]} gesperrt
+            </Badge>
+          ))}
+          {listing.restrictedChannels.length > 3 && (
+            <Badge variant="outline" className="text-[11px]">
+              +{listing.restrictedChannels.length - 3} weitere
+            </Badge>
+          )}
+        </div>
+
+        <PricingBox listing={listing} compact />
+      </CardContent>
     </Card>
   );
 }

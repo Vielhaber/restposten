@@ -1,23 +1,38 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Public_Sans, IBM_Plex_Mono } from "next/font/google";
 import { SiteHeader } from "@/components/site-header";
+import { SiteFooter } from "@/components/site-footer";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
+import { ThemeInitScript } from "@/components/theme-init-script";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const archivo = Archivo({
+  variable: "--font-archivo",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const publicSans = Public_Sans({
+  variable: "--font-public-sans",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Restposten Platform",
-  description: "Gated B2B clearance & liquidation marketplace for the DACH region",
+  title: {
+    default: "Restposten Platform — B2B Restposten-Marktplatz für DACH",
+    template: "%s — Restposten Platform",
+  },
+  description:
+    "Der gated B2B-Marktplatz für Restposten, Retouren und Überproduktion in Österreich & Deutschland — Treuhand-Zahlung, VIES-verifizierte Firmen, geprüfte Manifeste.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
@@ -43,12 +58,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="de"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${archivo.variable} ${publicSans.variable} ${plexMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-full flex-col">
+        <ThemeInitScript />
         <ServiceWorkerRegister />
         <SiteHeader />
-        {children}
+        <div className="flex flex-1 flex-col">{children}</div>
+        <SiteFooter />
       </body>
     </html>
   );

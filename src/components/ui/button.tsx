@@ -11,11 +11,13 @@ export const buttonVariants = cva(
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         outline: "border border-border bg-transparent text-foreground hover:bg-accent",
         ghost: "bg-transparent text-foreground hover:bg-accent",
+        gold: "bg-brand-gold text-brand-gold-foreground hover:opacity-90",
       },
       size: {
         default: "h-10 px-4 py-2",
         sm: "h-8 px-3 text-xs",
         lg: "h-11 px-6",
+        xl: "h-12 px-7 text-base",
       },
     },
     defaultVariants: { variant: "default", size: "default" },

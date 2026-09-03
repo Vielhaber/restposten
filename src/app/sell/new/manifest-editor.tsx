@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { FileUp, Download, CircleCheck, CircleAlert } from "lucide-react";
 import { manifestItemSchema, eanSchema, summarizeManifest, computeGrossMarginPercent } from "@/lib/validation/manifest.schema";
 import type { ItemCondition } from "@/lib/validation/manifest.schema";
 import { CONDITION_LABELS } from "@/lib/types/marketplace";
 import { formatCents } from "@/lib/format";
+import { parseEuroToCents } from "@/lib/currency";
+import { parseCsv, normalizeHeaderCell, normalizeConditionCell } from "@/lib/csv";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -31,12 +34,8 @@ function newRow(): DraftRow {
   };
 }
 
-function parseEuroToCents(raw: string): number | null {
-  const cleaned = raw.trim().replace(",", ".");
-  if (cleaned === "") return null;
-  const value = Number(cleaned);
-  if (Number.isNaN(value) || value < 0) return null;
-  return Math.round(value * 100);
+function isBlankRow(row: DraftRow): boolean {
+  return row.ean.trim() === "" && row.title.trim() === "";
 }
 
 type RowResult =
@@ -46,7 +45,7 @@ type RowResult =
 function validateRow(row: DraftRow): RowResult {
   const errors: string[] = [];
 
-  if (row.ean.trim() === "" && row.title.trim() === "") {
+  if (isBlankRow(row)) {
     // Blank scratch row — don't nag the seller before they've typed anything.
     return { row, ok: false, errors: [] };
   }
@@ -82,9 +81,67 @@ function validateRow(row: DraftRow): RowResult {
   return { row, ok: true, item: parsed.data };
 }
 
+const CSV_TEMPLATE = `ean,title,condition,quantity,msrp_eur,cost_basis_eur
+4006381333931,True-Wireless In-Ear Kopfhoerer,B_GRADE_RETURN,120,79.99,18.00
+4023124500122,Bluetooth-Lautsprecher 20W,A_GRADE,60,49.99,12.00
+`;
+
+function downloadCsvTemplate() {
+  const blob = new Blob([CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "manifest-vorlage.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Parses a CSV file's text into DraftRows. Unknown/missing columns are simply left blank on the row — the existing per-row Zod validation then explains exactly what's missing, the same way a hand-typed row would. */
+function parseManifestCsv(text: string): DraftRow[] {
+  const table = parseCsv(text);
+  if (table.length === 0) return [];
+
+  const [headerRow, ...dataRows] = table;
+  const columnMap = headerRow.map((cell) => normalizeHeaderCell(cell));
+
+  return dataRows
+    .filter((cells) => cells.some((cell) => cell.trim() !== ""))
+    .map((cells) => {
+      const draft = newRow();
+      cells.forEach((cell, i) => {
+        const field = columnMap[i];
+        const value = cell.trim();
+        if (!field || value === "") return;
+        switch (field) {
+          case "ean":
+            draft.ean = value;
+            break;
+          case "title":
+            draft.title = value;
+            break;
+          case "condition":
+            draft.condition = normalizeConditionCell(value);
+            break;
+          case "quantity":
+            draft.quantity = value;
+            break;
+          case "msrpEuro":
+            draft.msrpEuro = value;
+            break;
+          case "costBasisEuro":
+            draft.costBasisEuro = value;
+            break;
+        }
+      });
+      return draft;
+    });
+}
+
 export function ManifestEditor() {
   const [rows, setRows] = useState<DraftRow[]>([newRow(), newRow()]);
   const [submitted, setSubmitted] = useState(false);
+  const [importNotice, setImportNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(() => rows.map(validateRow), [rows]);
   const validItems = useMemo(
@@ -105,6 +162,31 @@ export function ManifestEditor() {
     setRows((prev) => (prev.length <= 1 ? prev : prev.filter((row) => row.id !== id)));
   }
 
+  async function handleCsvFile(file: File) {
+    try {
+      const text = await file.text();
+      const imported = parseManifestCsv(text);
+      if (imported.length === 0) {
+        setImportNotice({ kind: "error", text: `„${file.name}" enthält keine erkennbaren Datenzeilen.` });
+        return;
+      }
+      setRows((prev) => {
+        const keep = prev.filter((row) => !isBlankRow(row));
+        return [...keep, ...imported];
+      });
+      const validCount = imported.map(validateRow).filter((r) => r.ok).length;
+      setImportNotice({
+        kind: validCount === imported.length ? "success" : "error",
+        text:
+          validCount === imported.length
+            ? `${imported.length} Zeile${imported.length === 1 ? "" : "n"} aus „${file.name}" importiert — alle gültig.`
+            : `${imported.length} Zeile${imported.length === 1 ? "" : "n"} aus „${file.name}" importiert, ${imported.length - validCount} mit Fehlern — siehe Tabelle unten.`,
+      });
+    } catch {
+      setImportNotice({ kind: "error", text: `„${file.name}" konnte nicht gelesen werden — ist es eine gültige CSV-Datei?` });
+    }
+  }
+
   if (submitted) {
     return (
       <div className="rounded-lg border border-success/40 bg-success/10 p-6 text-sm">
@@ -123,6 +205,48 @@ export function ManifestEditor() {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-secondary/30 p-4">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleCsvFile(file);
+            e.target.value = "";
+          }}
+        />
+        <Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
+          <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
+          CSV importieren
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={downloadCsvTemplate}>
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          Vorlage herunterladen
+        </Button>
+        <p className="ml-1 text-xs text-muted-foreground">
+          Spalten: ean, title, condition, quantity, msrp_eur, cost_basis_eur — Komma oder Semikolon getrennt, Zeilen
+          werden unten sofort geprüft.
+        </p>
+      </div>
+
+      {importNotice && (
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-md border px-3 py-2 text-sm",
+            importNotice.kind === "success" ? "border-success/30 bg-success/10 text-success" : "border-warning/40 bg-warning/15 text-warning-foreground",
+          )}
+        >
+          {importNotice.kind === "success" ? (
+            <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          ) : (
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          )}
+          <span>{importNotice.text}</span>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full min-w-[820px] text-sm">
           <thead>
