@@ -27,7 +27,7 @@ export function ListingCard({ listing }: { listing: SampleListing }) {
   const priceCents = getEffectivePriceCents(listing);
 
   return (
-    <Card className="group overflow-hidden transition-shadow hover:shadow-lg hover:shadow-primary/5">
+    <Card className="group flex h-full flex-col overflow-hidden transition-shadow hover:shadow-lg hover:shadow-primary/5">
       <Link href={`/listings/${listing.slug}`} className="block">
         <div className={`relative flex h-32 items-center justify-center bg-gradient-to-br ${visual.gradient}`}>
           <Icon className="h-10 w-10 text-foreground/40 transition-transform group-hover:scale-110" aria-hidden="true" />
@@ -52,7 +52,7 @@ export function ListingCard({ listing }: { listing: SampleListing }) {
           </p>
         </CardHeader>
       </Link>
-      <CardContent className="flex flex-col gap-4 pt-4">
+      <CardContent className="flex flex-1 flex-col gap-4 pt-4">
         <dl className="grid grid-cols-3 gap-3 text-sm">
           <div>
             <dt className="text-xs text-muted-foreground">Artikel gesamt</dt>
@@ -68,20 +68,24 @@ export function ListingCard({ listing }: { listing: SampleListing }) {
           </div>
         </dl>
 
-        <div className="flex flex-wrap gap-1.5">
-          {listing.restrictedChannels.slice(0, 3).map((channel) => (
-            <Badge key={channel} variant="outline" className="text-[11px]">
-              {RESALE_CHANNEL_LABELS[channel]} gesperrt
-            </Badge>
-          ))}
-          {listing.restrictedChannels.length > 3 && (
-            <Badge variant="outline" className="text-[11px]">
-              +{listing.restrictedChannels.length - 3} weitere
-            </Badge>
-          )}
-        </div>
+        {listing.restrictedChannels.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {listing.restrictedChannels.slice(0, 3).map((channel) => (
+              <Badge key={channel} variant="outline" className="text-[11px]">
+                {RESALE_CHANNEL_LABELS[channel]} gesperrt
+              </Badge>
+            ))}
+            {listing.restrictedChannels.length > 3 && (
+              <Badge variant="outline" className="text-[11px]">
+                +{listing.restrictedChannels.length - 3} weitere
+              </Badge>
+            )}
+          </div>
+        )}
 
-        <PricingBox listing={listing} compact />
+        <div className="mt-auto flex flex-col gap-4">
+          <PricingBox listing={listing} compact />
+        </div>
       </CardContent>
     </Card>
   );

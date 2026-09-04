@@ -255,7 +255,7 @@ export default function Home() {
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {SAMPLE_LISTINGS.slice(0, 3).map((listing, i) => (
-              <Reveal key={listing.slug} delayMs={i * 80}>
+              <Reveal key={listing.slug} delayMs={i * 80} className="h-full">
                 <ListingCard listing={listing} />
               </Reveal>
             ))}
