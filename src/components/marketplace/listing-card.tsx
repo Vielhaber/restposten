@@ -3,6 +3,8 @@ import type { SampleListing } from "@/lib/types/marketplace";
 import { CONDITION_LABELS, RESALE_CHANNEL_LABELS } from "@/lib/types/marketplace";
 import { summarizeManifest } from "@/lib/validation/manifest.schema";
 import { getCategoryVisual } from "@/lib/category-visuals";
+import { getEffectivePriceCents } from "@/lib/listing-price";
+import { formatCents } from "@/lib/format";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PricingBox } from "./pricing-box";
@@ -22,20 +24,25 @@ export function ListingCard({ listing }: { listing: SampleListing }) {
   const summary = summarizeManifest(listing.manifestItems);
   const visual = getCategoryVisual(listing.category);
   const Icon = visual.icon;
+  const priceCents = getEffectivePriceCents(listing);
 
   return (
     <Card className="group overflow-hidden transition-shadow hover:shadow-lg hover:shadow-primary/5">
       <Link href={`/listings/${listing.slug}`} className="block">
-        <div className={`flex h-28 items-center justify-center bg-gradient-to-br ${visual.gradient}`}>
-          <Icon className="h-10 w-10 text-foreground/50 transition-transform group-hover:scale-110" aria-hidden="true" />
+        <div className={`relative flex h-32 items-center justify-center bg-gradient-to-br ${visual.gradient}`}>
+          <Icon className="h-10 w-10 text-foreground/40 transition-transform group-hover:scale-110" aria-hidden="true" />
+          {listing.isBlindListing && (
+            <Badge variant="warning" className="absolute left-3 top-3">
+              Blind-Listing · NDA
+            </Badge>
+          )}
+          <span className="absolute bottom-3 right-3 rounded-full bg-background/90 px-2.5 py-1 text-xs font-semibold tabular-nums shadow-sm backdrop-blur">
+            {priceCents > 0 ? formatCents(priceCents) : "Preis auf Anfrage"}
+          </span>
         </div>
 
         <CardHeader className="pb-0">
-          <div className="flex flex-wrap items-center gap-2">
-            {listing.isBlindListing && <Badge variant="warning">Blind-Listing · NDA</Badge>}
-            {listing.escrowRequired && <Badge variant="success">Treuhand-Zahlung</Badge>}
-            <Badge variant="outline">{listing.category}</Badge>
-          </div>
+          <p className="text-xs font-medium text-muted-foreground">{listing.category}</p>
           <h3 className="font-display text-lg font-semibold leading-snug text-balance">
             {listing.isBlindListing ? listing.blindTitle : listing.title}
           </h3>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Menu, X, Boxes } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -14,9 +14,27 @@ const NAV_LINKS = [
 
 export function SiteHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    // Set from the scroll listener's async callback, not synchronously in the
+    // effect body — a subscription reacting to an external (scroll) change,
+    // same pattern as <Reveal>'s IntersectionObserver. Starts from `false`,
+    // which is correct for the overwhelming majority of page loads (top of
+    // page); a restored mid-page scroll position just skips one frame of the
+    // shadow, which is not worth a sync read-on-mount here.
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur supports-backdrop-blur:bg-background/70">
+    <header
+      className={cn(
+        "sticky top-0 z-40 border-b bg-background/85 backdrop-blur transition-shadow duration-200 supports-backdrop-blur:bg-background/70",
+        scrolled ? "border-border shadow-sm" : "border-transparent",
+      )}
+    >
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3.5">
         <Link href="/" className="flex items-center gap-2 font-display text-lg font-semibold tracking-tight">
           <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
