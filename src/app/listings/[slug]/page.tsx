@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PricingBox } from "@/components/marketplace/pricing-box";
 import { ManifestTable } from "@/components/marketplace/manifest-table";
+import { CategoryIcon } from "@/components/marketplace/category-icon";
 import { DetailTabs } from "./detail-tabs";
 
 export function generateStaticParams() {
@@ -150,7 +151,7 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
       </nav>
 
       <div className={`flex h-32 items-center justify-center rounded-lg bg-gradient-to-br sm:h-40 ${visual.gradient}`}>
-        <Icon className="h-12 w-12 text-foreground/50" aria-hidden="true" />
+        <CategoryIcon icon={Icon} glow={visual.glow} size="lg" />
       </div>
 
       <div className="flex flex-col gap-3">

@@ -4,6 +4,7 @@ import { computeGrossMarginPercent } from "@/lib/validation/manifest.schema";
 import { formatCents } from "@/lib/format";
 import { getCategoryVisual } from "@/lib/category-visuals";
 import { Badge } from "@/components/ui/badge";
+import { CategoryIcon } from "./category-icon";
 
 /**
  * Decorative hero visual — a layered "product preview" (manifest snippet
@@ -43,7 +44,7 @@ export function HeroPreview() {
 
       <div className="absolute right-0 top-24 w-80 rotate-3 rounded-xl border border-border bg-card p-5 shadow-2xl">
         <div className={`-mx-5 -mt-5 mb-4 flex h-20 items-center justify-center rounded-t-xl bg-gradient-to-br ${visual.gradient}`}>
-          <Icon className="h-8 w-8 text-foreground/50" />
+          <CategoryIcon icon={Icon} glow={visual.glow} size="sm" />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge variant="warning" className="text-[10px]">

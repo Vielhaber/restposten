@@ -7,6 +7,7 @@ import { getEffectivePriceCents } from "@/lib/listing-price";
 import { formatCents } from "@/lib/format";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { CategoryIcon } from "./category-icon";
 import { PricingBox } from "./pricing-box";
 
 function conditionMix(listing: SampleListing): string {
@@ -30,7 +31,12 @@ export function ListingCard({ listing }: { listing: SampleListing }) {
     <Card className="group flex h-full flex-col overflow-hidden transition-shadow hover:shadow-lg hover:shadow-primary/5">
       <Link href={`/listings/${listing.slug}`} className="block">
         <div className={`relative flex h-32 items-center justify-center bg-gradient-to-br ${visual.gradient}`}>
-          <Icon className="h-10 w-10 text-foreground/40 transition-transform group-hover:scale-110" aria-hidden="true" />
+          <CategoryIcon
+            icon={Icon}
+            glow={visual.glow}
+            size="md"
+            className="transition-transform duration-300 group-hover:scale-105"
+          />
           {listing.isBlindListing && (
             <Badge variant="warning" className="absolute left-3 top-3">
               Blind-Listing · NDA
